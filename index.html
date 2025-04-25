@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Messsenger</title>
+    <script>
+        var timer, privateKey
+        function errorHandler(e) {
+            console.error(e);
+        }
+        function helper(f) {
+            f().catch(errorHandler);
+        }
+        function Start() {
+            document.getElementById("stop").disabled = false;
+            document.getElementById("start").disabled = true;
+            document.getElementById("from").disabled = true;
+            document.getElementById("text").disabled = false;
+            document.getElementById("file").disabled = false;
+            document.getElementById("send").disabled = false;
+            document.getElementById("to").disabled = false;
+            timer = setInterval(() => helper(Receive), 1000);
+        }
+        function Stop() {
+            clearTimeout(timer);
+        }
+        function makeRequest(url, data) {
+            return new Promise(function (resolve, reject) {
+                var xhr = new XMLHttpRequest();
+                xhr.open("POST", url);
+                xhr.setRequestHeader("Content-Type", "application/json");
+                xhr.onload = function () {
+                    if (this.status >= 200 && this.status < 300) {
+                        resolve(xhr.response);
+                    } else {
+                        reject({
+                            status: this.status,
+                            statusText: xhr.statusText
+                        });
+                    }
+                };
+                xhr.onerror = function () {
+                    reject({
+                        status: this.status,
+                        statusText: xhr.statusText
+                    });
+                };
+                xhr.send(data);
+            });
+        }
+        async function readFile(file) {
+            return new Promise((resolve, reject) => {
+                var reader = new FileReader();
+
+                reader.onload = (e) => {
+                    resolve(e.target.result)
+                }
+
+                reader.onerror = (e) => { reject(e) };
+
+                reader.readAsDataURL(file);
+            });
+        }
+        async function importPublicKey(publicKey) {
+            publicKey = publicKey.split(",");
+            var keyData = {
+                alg: "RSA-OAEP-256",
+                e: "AQAB",
+                n: publicKey[0],
+                p: publicKey[1],
+                key_ops: ["encrypt"],
+                ext: true,
+                kty: "RSA"
+            }
+            publicKey = await window.crypto.subtle.importKey(
+                "jwk",
+                keyData,
+                {
+                    name: "RSA-OAEP",
+                    modulusLength: 4096,
+                    publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+                    hash: {name: "SHA-256"},
+                },
+                false,
+                ["encrypt"]
+            );
+            return publicKey;
+        }
+        async function Login() {
+            var keyData = JSON.parse(localStorage.getItem(document.getElementById("slot").value));
+            var result = await window.crypto.subtle.importKey(
+                "jwk",
+                keyData,
+                {
+                    name: "RSA-OAEP",
+                    modulusLength: 4096,
+                    publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+                    hash: {name: "SHA-256"},
+                },
+                false,
+                ["decrypt"]
+            );
+            privateKey = result;
+            delete keyData.d;
+            delete keyData.dp;
+            delete keyData.dq;
+            delete keyData.q;
+            delete keyData.qi;
+            document.getElementById("from").value = [keyData.n, keyData.p].join(",")
+            Start();
+        }
+        async function Receive() {
+            var data = {
+                to: document.getElementById("from").value
+            }
+            var response = await makeRequest(document.location + "api/receive", JSON.stringify(data));
+            response = JSON.parse(response);
+            var messages = document.getElementById("messsages")
+            messages.innerHTML="";
+            for(var i = 0; i < response.length; i++) {
+                var msg = response[i];
+                msg.payload = await decrypt(msg.payload, privateKey);
+                if (msg.payload.startsWith("data:plain/text")) {
+                    var p = document.createElement("p");
+                    p.innerText = msg.from + ":" + msg.payload.substr(16);
+                    messages.append(p);
+                }
+                else {
+                    var p = document.createElement("p");
+                    p.innerText = msg.from + ":";
+                    messages.append(p);
+                    var img = document.createElement("img");
+                    img.src=msg.payload;
+                    messages.append(img);
+                }
+            }
+        }
+        async function decrypt(encrypted, key) {
+            encrypted = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0));
+            var decrypted = await window.crypto.subtle.decrypt({
+                    name: "RSA-OAEP",
+                },
+                key,
+                encrypted
+            );
+            return new TextDecoder().decode(decrypted);
+        }
+        async function encrypt(source, key) {
+            var encrypted = await window.crypto.subtle.encrypt({
+                    name: "RSA-OAEP"
+                },
+                key,
+                new TextEncoder().encode(source)
+            );
+            return btoa(String.fromCharCode.apply(null, new Uint8Array(encrypted)))
+        }
+        async function Send() {
+            var data = {
+                from: document.getElementById("from").value,
+                to: document.getElementById("to").value,
+                payload: "data:plain/text;" + document.getElementById("text").value
+            }
+            var publicKey = await importPublicKey(data.to);
+            var file = document.getElementById("file").files[0];
+            document.getElementById("text").disabled = true;
+            document.getElementById("file").disabled = true;
+            if (file != null) {
+                result = await readFile(file);
+                data.payload = result;
+            }
+            document.getElementById("text").value = "";
+            document.getElementById("file").value = "";
+            document.getElementById("text").disabled = false;
+            document.getElementById("file").disabled = false;
+            data.payload = await encrypt(data.payload, publicKey);
+            await makeRequest(document.location + "api/send", JSON.stringify(data));
+        }
+        async function Generate() {
+            var key = await window.crypto.subtle.generateKey({
+                    name: "RSA-OAEP",
+                    modulusLength: 4096,
+                    publicExponent: new Uint8Array([0x01, 0x00, 0x01]),
+                    hash: {name: "SHA-256"},
+                },
+                true,
+                ["encrypt", "decrypt"]
+            );
+            var keydata = await window.crypto.subtle.exportKey(
+                "jwk",
+                key.privateKey
+            );
+            localStorage.setItem(document.getElementById("slot").value, JSON.stringify(keydata));
+        }
+
+    </script>
+</head>
+<body>
+<select id="slot">
+    <option value="key_0">0</option>
+    <option value="key_1">1</option>
+    <option value="key_2">2</option>
+    <option value="key_3">3</option>
+    <option value="key_4">4</option>
+    <option value="key_5">5</option>
+    <option value="key_6">6</option>
+    <option value="key_7">7</option>
+    <option value="key_8">8</option>
+    <option value="key_9">9</option>
+</select>
+<input type="button" onclick="helper(Generate)" value="Register"/>
+<input type="button" onclick="helper(Login)" id="start" value="Login"/>
+<input id="stop" type="button" value="Logout" disabled onclick="Stop()"/>
+<input type="text" id="from" readonly/>
+<div id="messsages"></div>
+<div id="encoder"></div>
+<p>His ID:</p>
+<input type="text" id="to" disabled/>
+<textarea id="text" disabled></textarea>
+<input type="file" id="file" disabled/>
+<input type="button" id="send" value="send" disabled onclick="helper(Send)"/>
+</body>
+</html>
