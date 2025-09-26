@@ -44,6 +44,7 @@ def make_db():
     cursor.close()
     connection.close()
 
+
 def add_user(username, password_hash):
     connection = connect()
     cursor = connection.cursor()
@@ -56,6 +57,31 @@ def add_user(username, password_hash):
     cursor.close()
     connection.close()
 
+
+def remove_user(user_id):
+    connection = connect()
+    cursor = connection.cursor()
+    cursor.execute("DELETE FROM chat_members where user_id (?)", user_id)
+    cursor.close()
+    connection.close()
+
+
+def delete_chat(chat_id):
+    connection = connect()
+    cursor = connection.cursor()
+    cursor.execute(f"""
+                    DELETE FROM messages WHERE
+                chat_id = {chat_id};
+                    DELETE FROM chat_members WHERE
+                chat_id = {chat_id};
+                    DELETE FROM chats WHERE id = 
+                {chat_id};
+                    """)
+    connection.commit()
+    cursor.close()
+    connection.close()
+
+
 def new_chat(name=None, is_group=0):
     connection = connect()
     cursor = connection.cursor()
@@ -67,6 +93,7 @@ def new_chat(name=None, is_group=0):
     connection.close()
     return chat_id
 
+
 def add_to_chat(chat_id, user_id):
     connection = connect()
     cursor = connection.cursor()
@@ -75,6 +102,7 @@ def add_to_chat(chat_id, user_id):
     print(f"Пользователь {user_id} добавлен в чат {chat_id}")
     cursor.close()
     connection.close()
+
 
 def send_msg(chat_id, sender_id, text):
     connection = connect()
@@ -85,10 +113,11 @@ def send_msg(chat_id, sender_id, text):
     cursor.close()
     connection.close()
 
+
 def show_msgs(chat_id, limit=10):
     connection = connect()
     cursor = connection.cursor()
- cursor.execute("""
+    cursor.execute("""
         SELECT users.username, messages.content, messages.sent_at
         FROM messages
         JOIN users ON messages.sender_id = users.id
